@@ -3,7 +3,13 @@ import os
 
 def get_files_info(working_directory, directory=None):
     abs_working_directory = os.path.abspath(working_directory)
-    abs_directory = os.path.abspath(os.path.join(abs_working_directory, directory))
+    if directory is not None:
+        if not directory.startswith('/'):
+            abs_directory = os.path.abspath(os.path.join(abs_working_directory, directory))
+        else:
+            abs_directory = os.path.abspath(directory)
+    else:
+        abs_directory = abs_working_directory
 
     try:
         if not abs_directory.startswith(abs_working_directory):

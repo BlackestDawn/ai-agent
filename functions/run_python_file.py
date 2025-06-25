@@ -2,7 +2,7 @@ import os
 import subprocess
 
 
-def run_python_file(working_directory, file_path):
+def run_python_file(working_directory, file_path, args=None):
     abs_working_directory = os.path.abspath(working_directory)
     if not file_path.startswith('/'):
         abs_file_path = os.path.abspath(os.path.join(abs_working_directory, file_path))
@@ -19,8 +19,12 @@ def run_python_file(working_directory, file_path):
         return f'Error: "{file_path}" is not a Python file.'
 
     try:
-        result = subprocess.run(['python', abs_file_path], capture_output=True, text=True, timeout=30, cwd=working_directory)
-        if len(result.stdout) == 0:
+        run_args = ['python', abs_file_path]
+        if args is not None:
+            run_args.extend(args)
+
+        result = subprocess.run(run_args, capture_output=True, text=True, timeout=30, cwd=working_directory)
+        if result.stdout is None or len(result.stdout) == 0:
             return "no output produced"
 
         output = f'Running Python file "{file_path}":\n\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}'

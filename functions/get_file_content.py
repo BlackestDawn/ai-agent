@@ -1,4 +1,6 @@
 import os
+from google.genai import types
+from config import max_content_size
 
 
 def get_file_content(working_directory, file_path):
@@ -16,10 +18,27 @@ def get_file_content(working_directory, file_path):
             return f'Error: File not found or is not a regular file: "{file_path}"'
 
         with open(abs_file_path, 'r') as file:
-            content = file.read(10001)
-            if len(content) <= 10000:
-                return content
-            else:
-                return content[:10000] + f'[...File "{file_path}" truncated at 10000 characters]'
+            content = file.read(max_content_size)
+            if os.path.getsize(abs_file_path) > max_content_size:
+                content += f'[...File "{file_path}" truncated at {max_content_size} characters]'
+            return content
     except Exception as e:
-        return f'Error: {e}'
+        return f'Error reading file: {e}'
+
+
+schema_get_file_content = types.FunctionDeclaration(
+    name="get_file_content",
+    description="Reads and returns the contents of a file up to 10000 characters within the working directory.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "file_path": types.Schema(
+                type=types.Type.STRING,
+                description="The file to show the contents of, relative to the working directory.",
+            ),
+        },
+        required=[
+            "file_path"
+        ],
+    ),
+)

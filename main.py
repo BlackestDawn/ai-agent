@@ -3,10 +3,8 @@ import sys
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from functions.get_files_info import get_files_info
-from functions.get_file_content import get_file_content
-from functions.write_file import write_file
-from functions.run_python_file import run_python_file
+from config import system_prompt, ai_model, max_iters
+from call_function import call_function, available_functions
 
 
 def main():
@@ -21,108 +19,30 @@ def main():
     api_key = os.environ.get("GEMINI_API_KEY")
     client = genai.Client(api_key=api_key)
 
-    ai_model = "gemini-2.0-flash-001"
     prompt = " ".join(args)
     messages = [
         types.Content(role="user", parts=[types.Part(text=prompt)]),
     ]
 
-    system_prompt = """
-You are a helpful AI coding agent.
+    iters = 0
+    while True:
+        iters += 1
+        if iters > max_iters:
+            print(messages[2].parts[0])
+            print("Maximum iterations reached")
+            sys.exit(1)
 
-When a user asks a question or makes a request, make a function call plan. You can perform the following operations:
+        try:
+            response = generate_content(client, messages, verbose)
+            if response:
+                print("Final response:")
+                print(response)
+                break
+        except Exception as e:
+            print(f"Error in generated content: {e}")
 
-- List files and directories
-- Read file contents
-- Execute Python files with optional arguments
-- Write or overwrite files
 
-All paths you provide should be relative to the working directory. You do not need to specify the working directory in your function calls as it is automatically injected for security reasons.
-"""
-
-    schema_get_files_info = types.FunctionDeclaration(
-        name="get_files_info",
-        description="Lists files in the specified directory along with their sizes, constrained to the working directory.",
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "directory": types.Schema(
-                    type=types.Type.STRING,
-                    description="The directory to list files from, relative to the working directory. If not provided, lists files in the working directory itself.",
-                ),
-            },
-        ),
-    )
-    schema_get_file_content = types.FunctionDeclaration(
-        name="get_file_content",
-        description="Shows the contents of a file up to 10000 characters, constrained to the working directory.",
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "file_path": types.Schema(
-                    type=types.Type.STRING,
-                    description="The file to show the contents of, relative to the working directory.",
-                ),
-            },
-            required=[
-                "file_path"
-            ],
-        ),
-    )
-    schema_run_python_file = types.FunctionDeclaration(
-        name="run_python_file",
-        description="Runs a Python file, constrained to the working directory.",
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "file_path": types.Schema(
-                    type=types.Type.STRING,
-                    description="The Python file to run, relative to the working directory.",
-                ),
-                "args": types.Schema(
-                    type=types.Type.ARRAY,
-                    items=types.Schema(
-                        type=types.Type.STRING,
-                        description="Optional arguments to pass to the Python file. If not provided should be ommited.",
-                    ),
-                ),
-            },
-            required=[
-                "file_path"
-            ],
-        ),
-    )
-    schema_write_file = types.FunctionDeclaration(
-        name="write_file",
-        description="Writes new contents to a file replacing any existing contents, constrained to the working directory.",
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "file_path": types.Schema(
-                    type=types.Type.STRING,
-                    description="The file to write to, relative to the working directory.",
-                ),
-                "content": types.Schema(
-                    type=types.Type.STRING,
-                    description="The contents to write to the file.",
-                ),
-            },
-            required=[
-                "file_path",
-                "content"
-            ],
-        ),
-    )
-
-    available_functions = types.Tool(
-        function_declarations=[
-            schema_get_files_info,
-            schema_get_file_content,
-            schema_run_python_file,
-            schema_write_file,
-        ]
-    )
-
+def generate_content(client, messages, verbose):
     response = client.models.generate_content(
         model=ai_model,
         contents=messages,
@@ -131,48 +51,32 @@ All paths you provide should be relative to the working directory. You do not ne
             system_instruction=system_prompt),
     )
 
-    if response.function_calls is not None and len(response.function_calls) > 0:
-        for function_call in response.function_calls:
-            print(call_function(function_call, verbose=verbose))
-    else:
-        print(response.text)
-
     if verbose:
-        print("User prompt:", prompt)
         print("Prompt tokens:", response.usage_metadata.prompt_token_count)
         print("Response tokens:", response.usage_metadata.candidates_token_count)
 
+    if not response.function_calls:
+        return response.text
 
-def call_function(function_call_part, verbose=False):
-    if verbose:
-        print(f"Calling function: {function_call_part.name}({function_call_part.args})")
-    else:
-        print(f" - Calling function: {function_call_part.name}")
+    for candidate in response.candidates:
+        messages.append(candidate.content)
 
-    function_args = {"working_directory": "./calculator"}
-    if function_call_part.args is not None and len(function_call_part.args) > 0:
-        function_args.update(function_call_part.args)
+    function_responses = []
+    for function_call in response.function_calls:
+        function_call_result = call_function(function_call, verbose)
+        if (
+            not function_call_result.parts
+            or not function_call_result.parts[0].function_response
+        ):
+            raise Exception("empty function call result")
+        if verbose:
+            print(f" -> {function_call_result.parts[0].function_response.response}")
+        function_responses.append(function_call_result.parts[0])
 
-    function_name = function_call_part.name
-    match function_name:
-        case "get_files_info":
-            return get_files_info(**function_args)
-        case "get_file_content":
-            return get_file_content(**function_args)
-        case "run_python_file":
-            return run_python_file(**function_args)
-        case "write_file":
-            return write_file(**function_args)
-        case _:
-            return types.Content(
-                role="tool",
-                parts=[
-                    types.Part.from_function_response(
-                        name=function_name,
-                        response={"error": f"Unknown function: {function_name}"},
-                    )
-                ],
-            )
+    if not function_responses:
+        raise Exception("no function responses generated, exiting")
+
+    messages.append(types.Content(role="tool", parts=function_responses))
 
 
 if __name__ == "__main__":
